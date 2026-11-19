@@ -1,0 +1,15 @@
+node_modules/
+.tools/
+.runtime/
+.env
+.env.*
+!.env.example
+*.log
+npm-debug.log*
+status.json
+launcher-status.json
+base-config.json
+alert-state.json
+test-data/
+qc-*.png
+
