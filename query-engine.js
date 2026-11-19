@@ -25,6 +25,42 @@ function filterCurrent(data, text) {
   if (subject) rows = rows.filter(row => row.subject === subject);
   return rows;
 }
+function qcPeriodRows(data, text) {
+  const currentWeek = period(data), all = new Map();
+  for (const row of data.qc.history) all.set(`${row.week}|${row.className}|${row.subject}`, row);
+  for (const row of data.qc.current) all.set(`${row.week}|${row.className}|${row.subject}`, row);
+  const records = [...all.values()], weeks = [...new Set(records.map(row => row.week))].sort();
+  let selectedWeeks = [currentWeek], label = '本周';
+  if (/上(个|一)?星期|上周|last week|previous week/i.test(text)) { selectedWeeks = [weeks.filter(week => week !== currentWeek).at(-1)].filter(Boolean); label = '上周'; }
+  else if (/上个月|上月|last month/i.test(text)) { const month = currentWeek.match(/^(\d{4}-\d{2})/)?.[1]; const prior = [...new Set(weeks.map(week => week.slice(0, 7)).filter(value => value < month))].sort().at(-1); selectedWeeks = weeks.filter(week => week.startsWith(prior)); label = `上月（${prior || 'N/A'}）`; }
+  else if (/这个月|本月|this month/i.test(text)) { const month = currentWeek.slice(0, 7); selectedWeeks = weeks.filter(week => week.startsWith(month)); label = `本月（${month}）`; }
+  return { rows: records.filter(row => selectedWeeks.includes(row.week)), weeks: selectedWeeks, label };
+}
+function qcMetricBlock(title, rows, numerator, denominator) {
+  const value = metric(rows, numerator, denominator);
+  const individual = value.rows.map(item => item.rate);
+  const average = individual.length ? individual.reduce((total, rate) => total + rate, 0) / individual.length : null;
+  return `${title}：${display(value.rate)}（${value.numerator}/${value.denominator}）\n平均${title}：${display(average)}\n有效班级／记录：${value.count}`;
+}
+function qcDashboard(text, data) {
+  const selected = qcPeriodRows(data, text), t = text.toLowerCase();
+  const header = `【QC 数据｜${selected.label}】\n覆盖统计周：${selected.weeks.join('、') || 'N/A'}\n`;
+  if (/^\s*qc\s*$/i.test(text) || /qc数据|qc 总览|qc菜单/i.test(text)) return `${header}\n1. 出席：出席率、平均出席率\n2. 听写：完成率、正确率、平均完成率、平均正确率\n3. 测验：完成率、正确率、平均完成率、平均正确率\n4. 功课：完成率、正确率、平均完成率、平均正确率\n5. 成绩：进步率、退步率、平均分\n\n可问：本周 QC 测验、上周 QC 功课、本月 QC 出席、上月 QC 成绩。${footer(data)}`;
+  if (/听写|dictation/.test(t)) {
+    const activity = data.classDetails.filter(row => selected.weeks.includes(row['统计周']) && /dictation|听写/i.test(String(row['活动类型'] || row['功课子类'] || '')));
+    return activity.length ? `${header}\n${qcMetricBlock('听写完成率', activity, '已完成', '应完成')}\n${qcMetricBlock('听写正确率', activity, '答对', '已作答')}${footer(data, '班级明细')}` : na(`${selected.label}听写 QC`, data, '班级明细尚未导入听写活动的完成／应完成与答对／已作答');
+  }
+  if (/测验|quiz/.test(t)) return `${header}\n${qcMetricBlock('测验完成率', selected.rows, 'quizCompleted', 'quizRequired')}\n${qcMetricBlock('测验正确率', selected.rows, 'quizCorrect', 'quizAnswered')}${footer(data)}`;
+  if (/功课|作业|homework/.test(t)) return `${header}\n${qcMetricBlock('功课完成率', selected.rows, 'homeworkCompleted', 'homeworkRequired')}\n${qcMetricBlock('功课正确率', selected.rows, 'homeworkCorrect', 'homeworkAnswered')}${footer(data)}`;
+  if (/成绩|平均分|进步率|退步率/.test(t)) {
+    const scores = data.scores.filter(row => selected.weeks.includes(row['统计周']));
+    if (!scores.length) return na(`${selected.label}成绩 QC`, data, '成绩明细尚未导入该期间的真实班级评估记录');
+    const comparable = sum(scores.map(row => row['可比较人数'])), improved = sum(scores.map(row => row['进步学生数'])), declined = sum(scores.map(row => row['退步学生数']));
+    const averages = scores.map(row => number(row['本次平均分'])).filter(value => value !== null);
+    return `${header}\n平均分：${averages.length ? (averages.reduce((a, b) => a + b, 0) / averages.length).toFixed(1) : 'N/A'}\n进步率：${comparable ? display(improved / comparable) : 'N/A'}（${improved}/${comparable}）\n退步率：${comparable ? display(declined / comparable) : 'N/A'}（${declined}/${comparable}）\n定义：个人标准化分数较前测 > +5 分为进步；< -5 分为退步。${footer(data, '成绩明细')}`;
+  }
+  return `${header}\n${qcMetricBlock('出席率', selected.rows, 'present', 'attendanceDenominator')}${footer(data)}`;
+}
 function attendance(text, data) {
   const rows = filterCurrent(data, text), overall = metric(rows, 'present', 'attendanceDenominator');
   const named = rows.find(row => text.includes(row.className));
@@ -101,6 +137,7 @@ function answerManagementQuestion(text) {
   const t = text.toLowerCase();
   if (/图表|chart/.test(t)) return null; // The existing image route owns chart requests.
   if (/功能|帮助|可以问|能问|menu/.test(t)) return capabilityMenu();
+  if (/^\s*qc\s*$/i.test(text) || /qc/i.test(text) || /听写|dictation|测验|quiz|功课|作业|homework/.test(t) || (/成绩|平均分|进步率|退步率/.test(t) && /本周|上周|本月|上月|qc/.test(t))) return qcDashboard(text, data);
   if (/数据完整|数据状态|资料完整|什么数据/.test(t)) return availability(data);
   if (/运营总览|运营摘要|管理总览/.test(t)) return operations(data);
   if (/活动|课堂|before|during|after/.test(t)) return activity(data);
