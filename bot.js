@@ -216,7 +216,12 @@ async function main() {
   setStatus('connected');
   console.log('[startup] WebSocket connected and ready to receive im.message.receive_v1.');
   if (RUN_MODE === 'local') {
-    try { await syncSample(apiClient); console.log('[sync] Initial current-week QC sync completed.'); }
+    try {
+      await syncSample(apiClient);
+      // After an offline period, notify only after the freshly read workbook has verified into Base.
+      await notify(apiClient, alertState().chatId, readRows());
+      console.log('[sync] Initial current-week QC sync completed.');
+    }
     catch { console.error('[sync] Initial QC sync failed; existing verified Base data was left unchanged.'); }
   }
   const qcFile = process.env.QC_MASTER_PATH || 'C:/Users/Tee Wen Sheng/OneDrive/桌面/VGRO_Weekly_Subject_QC_Master.xlsx';
