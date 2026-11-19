@@ -9,6 +9,7 @@ const { state: alertState, save: saveAlertState, notify, buildAlerts, formatAler
 const { report } = require('./report');
 const { qcChart } = require('./charts');
 const { createGuard, watchExcel } = require('./sync-guard');
+const { answerManagementQuestion } = require('./query-engine');
 
 const APP_ID = process.env.LARK_APP_ID;
 const APP_SECRET = process.env.LARK_APP_SECRET;
@@ -156,7 +157,8 @@ async function main() {
         try { replyText = formatAlertSummary(buildAlerts(readRows())); }
         catch { replyText = 'QC 主档目前无法读取，因此不能生成异常摘要。'; }
       }
-      if (/准备.*老师.*报告|教师.*报告|teacher.*report/i.test(incomingText)) replyText = report();
+      if (!replyText) replyText = answerManagementQuestion(incomingText);
+      if (!replyText && /准备.*老师.*报告|教师.*报告|teacher.*report/i.test(incomingText)) replyText = report();
       let requestedChart = chartRequest(incomingText);
       const numberChoice = chartNumberChoice(message.chat_id, incomingText);
       if (numberChoice) requestedChart = numberChoice;
@@ -170,7 +172,7 @@ async function main() {
       if (!replyText && requestedChart?.type === 'qc') {
         try { const chart = await qcChart(requestedChart.metric); const image = await apiClient.im.image.create({ data: { image_type: 'message', image: fs.createReadStream(chart) } }); if(image?.image_key){ await apiClient.im.message.create({params:{receive_id_type:'chat_id'},data:{receive_id:message.chat_id,content:JSON.stringify({image_key:image.image_key}),msg_type:'image'}}); replyText=`本周 QC ${requestedChart.label}图表已发送。`; } else replyText='图表上传失败。'; } catch (error) { replyText = error?.message === 'No valid numerator and denominator for this QC chart' ? `本周 QC 主档没有有效的${requestedChart.label}分子与分母，因此无法生成真实图表。` : '图表生成或发送失败，现有数据未受影响。'; }
       }
-      if (incomingText.trim() === '同步 QC 测试') { try { const r=await syncSample(apiClient); replyText=`QC_WEEKLY 同步成功：${r.count} 条（新增 ${r.created}，更新 ${r.updated}）。`; } catch { replyText='QC Base 同步失败：请确认 bitable:app 已发布且应用拥有 Base 权限。'; } }
+      if (!replyText && incomingText.trim() === '同步 QC 测试') { try { const r=await syncSample(apiClient); replyText=`QC_WEEKLY 同步成功：${r.count} 条（新增 ${r.created}，更新 ${r.updated}）。`; } catch { replyText='QC Base 同步失败：请确认 bitable:app 已发布且应用拥有 Base 权限。'; } }
       if (!replyText) {
         try { replyText = answerQuestion(incomingText, await readCurrentWeek(apiClient)); if(replyText) replyText += '\n来源：Lark Base QC_WEEKLY'; }
         catch { try { replyText = answerQuestion(incomingText, readRows()); if(replyText) replyText += '\n来源：QC Excel（Base 暂不可读）'; } catch { replyText = 'QC 数据目前无法读取，因此不能生成数字。请先确认主档已成功更新。'; } }
